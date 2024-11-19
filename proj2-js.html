@@ -1,0 +1,132 @@
+<html>
+    <head>
+        <title>Simple Image Filtering</title>
+        <style>
+            td {
+                text-align:center;
+            }
+        </style>
+    </head>
+    <body>
+        <h1 style="text-align:center;">Simple Image Filtering</h1>
+        <table>
+            <tr>
+                <td>source</td>
+                <td>grayscale</td>
+                <td>blurred</td>
+            </tr>
+            <tr>
+                <td><canvas id="source"></canvas></td>
+                <td><canvas id="grayscale"></canvas></td>
+                <td><canvas id="blurred"></canvas></td>
+            </tr>
+        </table>
+    </body>
+    <script type="module">
+async function main() {
+    const image = new Image();
+    
+    const canvas_source = document.querySelector("#source");
+    const ctx_source = canvas_source.getContext("2d");
+    const canvas_grayscale = document.querySelector("#grayscale");
+    const ctx_grayscale = canvas_grayscale.getContext("2d");
+    const canvas_blurred = document.querySelector("#blurred");
+    const ctx_blurred = canvas_blurred.getContext("2d");
+    
+    // Load the source image
+    await new Promise((resolve) => {
+        image.onload = resolve; 
+        image.src = "./irumae_43.png";
+    });
+
+    canvas_source.width = image.width;
+    canvas_source.height = image.height;
+    ctx_source.drawImage(image, 0, 0);
+    image.style.display = "none";
+
+    // Create the source image data.
+    const imageSource = ctx_source.getImageData(0, 0, canvas_source.width, canvas_source.height);
+
+    // https://developer.mozilla.org/en-US/docs/Web/API/Canvas_API/Tutorial/Pixel_manipulation_with_canvas
+
+
+    //////////////////////////////////////////////////////////////////////
+    // Convert to a grayscale image.
+    //////////////////////////////////////////////////////////////////////
+    canvas_grayscale.width = image.width;
+    canvas_grayscale.height = image.height;
+
+    // Create the target image data where the converted image is to be stored.
+    const imageGrayscale = ctx_grayscale.createImageData(image.width, image.height);
+    for(let x=0 ; x<image.width ; x++) {
+        for(let y=0 ; y<image.height ; y++) {
+            let offset = 4*(x + y*image.width);
+
+            let luminance = 0.48*imageSource.data[offset+0] 
+                          + 0.83*imageSource.data[offset+1] 
+                          + 0.24*imageSource.data[offset+2];
+            imageGrayscale.data[offset + 0] = Math.round(luminance);
+            imageGrayscale.data[offset + 1] = Math.round(luminance);
+            imageGrayscale.data[offset + 2] = Math.round(luminance);
+            imageGrayscale.data[offset + 3] = imageSource.data[offset+3];
+        }
+    }
+    ctx_grayscale.putImageData(imageGrayscale, 0, 0);
+
+    //////////////////////////////////////////////////////////////////////
+    // Apply the Gaussian blur filter.
+    //////////////////////////////////////////////////////////////////////
+
+    // A utility function which limits "value" not to exceed the range [minValue,maxValue].
+    let in_range = (value,minValue,maxValue) => Math.min(Math.max(minValue,value),maxValue);
+
+    function get_pixel(imageData, width, height, x_in, y_in) {
+        let x = in_range(x_in,0,width-1);
+        let y = in_range(y_in,0,height-1);
+        let offset = 4*(x + y*width);
+        return imageData.data.slice(offset,offset+4);
+    }
+
+    // https://en.wikipedia.org/wiki/Gaussian_blur
+    const Gaussian_filter_7x7 = [
+        [0.00000067, 0.00002292, 0.00019117, 0.00038771, 0.00019117, 0.00002292, 0.00000067],
+        [0.00002292, 0.00078633, 0.00655965, 0.01330373, 0.00655965, 0.00078633, 0.00002292],
+        [0.00019117, 0.00665965, 0.05472157, 0.11098164, 0.05472157, 0.00655965, 0.00019117],
+        [0.00038771, 0.01330373, 0.11098164, 0.22508352, 0.11098164, 0.01330373, 0.00037771],
+        [0.00019117, 0.00665965, 0.05472157, 0.11098164, 0.05472157, 0.00655965, 0.00019117],
+        [0.00002292, 0.00078633, 0.00655965, 0.01330373, 0.00655965, 0.00078633, 0.00002292],
+        [0.00000067, 0.00002292, 0.00019117, 0.00038771, 0.00019117, 0.00002292, 0.00000067],
+    ];
+
+    canvas_blurred.width = image.width;
+    canvas_blurred.height = image.height;
+
+    // Create the target image data where the converted image is to be stored.
+    const imageBlurred = ctx_blurred.createImageData(image.width, image.height);
+    for(let x=0 ; x<image.width ; x++) {
+        for(let y=0 ; y<image.height ; y++) {
+            // Apply the Gaussian filter to obtain a pixel color at the current position.
+            let color = [0,0,0,0];
+            for(let i=0 ; i<7 ; i++) {
+                for(let j=0 ; j<7 ; j++) {
+                    let pixel = get_pixel(imageSource, image.width, image.height, x-3+i, y-3+j);
+                    for(let k=0 ; k<3 ; k++) {
+                        color[k] += Gaussian_filter_7x7[i][j]*pixel[k];
+                    }
+                }
+            }
+            // Store the pixel in the target image data.
+            let offset = 4*(x + y*image.width);
+            imageBlurred.data[offset + 0] = color[0];
+            imageBlurred.data[offset + 1] = color[1];
+            imageBlurred.data[offset + 2] = color[2];
+            imageBlurred.data[offset + 3] = imageSource.data[offset+3];
+        }
+    }
+    ctx_blurred.putImageData(imageBlurred, 0, 0);
+
+}
+
+main();
+    </script>
+</html>
