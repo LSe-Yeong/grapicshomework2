@@ -174,6 +174,82 @@ async function main() {
         `,
     });
 
+    modules["grayscale"] = device.createShaderModule({
+        label: "grayscale shader",
+        code: `
+            @group(0) @binding(${binding_copy_tex_in}) var textureIn: texture_external;
+            @group(0) @binding(${binding_copy_tex_out}) var textureOut: texture_storage_2d<rgba8unorm, write>;
+    
+            @compute @workgroup_size(${workgroup_size[0]},${workgroup_size[1]}) fn main_comp(
+                @builtin(global_invocation_id) id: vec3u
+            ) {
+                let uv = id.xy;
+    
+                var texel = textureLoad(textureIn, uv);
+                let grayscale = 0.48 * texel.r + 0.83 * texel.g + 0.24 * texel.b;
+                textureStore(textureOut, uv, vec4f(grayscale, grayscale, grayscale, texel.a));
+            }
+        `,
+    });
+
+
+    modules["gaussian"] = device.createShaderModule({
+        label: "Gaussian Blur shader",
+        code: `
+            // 텍스처와 출력 텍스처 바인딩
+            @group(0) @binding(2) var textureIn: texture_external;
+            @group(0) @binding(4) var textureOut: texture_storage_2d<rgba8unorm, write>;
+
+            // 7x7 가우시안 필터 커널
+            let Gaussian_filter_7x7: array<array<f32, 7>, 7> = array<array<f32, 7>, 7>(
+                array<f32, 7>(0.00000067, 0.00002292, 0.00019117, 0.00038771, 0.00019117, 0.00002292, 0.00000067),
+                array<f32, 7>(0.00002292, 0.00078633, 0.00655965, 0.01330373, 0.00655965, 0.00078633, 0.00002292),
+                array<f32, 7>(0.00019117, 0.00665965, 0.05472157, 0.11098164, 0.05472157, 0.00655965, 0.00019117),
+                array<f32, 7>(0.00038771, 0.01330373, 0.11098164, 0.22508352, 0.11098164, 0.01330373, 0.00038771),
+                array<f32, 7>(0.00019117, 0.00665965, 0.05472157, 0.11098164, 0.05472157, 0.00655965, 0.00019117),
+                array<f32, 7>(0.00002292, 0.00078633, 0.00655965, 0.01330373, 0.00655965, 0.00078633, 0.00002292),
+                array<f32, 7>(0.00000067, 0.00002292, 0.00019117, 0.00038771, 0.00019117, 0.00002292, 0.00000067)
+            );
+
+            // 텍스처의 크기
+            let textureSize: vec2<u32> = textureDimensions(textureIn).xy;
+
+            // 범위 제한 함수 (in_range)
+            fn in_range(value: u32, minValue: u32, maxValue: u32) -> u32 {
+                return min(max(value, minValue), maxValue);
+            }
+
+            // 7x7 가우시안 필터 적용
+            @compute @workgroup_size(8, 8) fn main_comp(@builtin(global_invocation_id) id: vec3u) {
+                let uv = id.xy;
+
+                // 필터링할 색상 값을 저장할 배열
+                var color: vec3<f32> = vec3<f32>(0.0, 0.0, 0.0);
+
+                // 7x7 커널을 사용하여 주변 픽셀을 필터링
+                for (var i: i32 = -3; i <= 3; i = i + 1) {
+                    for (var j: i32 = -3; j <= 3; j = j + 1) {
+                        // 현재 픽셀의 주변 픽셀 위치 계산
+                        let neighborUv: vec2<u32> = vec2<u32>(
+                            in_range(uv.x + u32(i), 0u, textureSize.x - 1u),
+                            in_range(uv.y + u32(j), 0u, textureSize.y - 1u)
+                        );
+
+                        // 주변 픽셀의 색상을 불러오고 가우시안 커널 값으로 곱함
+                        let texel: vec4<f32> = textureLoad(textureIn, neighborUv);
+                        let weight: f32 = Gaussian_filter_7x7[i + 3][j + 3]; // 커널 인덱스 계산
+
+                        // 색상 값에 가중치를 곱해 더함
+                        color = color + texel.rgb * weight;
+                    }
+                }
+
+                // 결과를 출력 텍스처에 저장
+                let offset = 4 * (uv.x + uv.y * textureSize.x);
+                textureStore(textureOut, uv, vec4<f32>(color, 1.0)); // 알파 채널은 1.0으로 설정
+            }
+        `,
+    });
 
     // The vertex & fragment shaders which draws a textured quad
     const moduleTexQuad = device.createShaderModule({
