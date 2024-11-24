@@ -174,8 +174,8 @@ async function main() {
         `,
     });
 
-    modules["grayscale"] = device.createShaderModule({
-        label: "grayscale shader",
+    modules["grayscale filter"] = device.createShaderModule({
+        label: "grayscale filter shader",
         code: `
             @group(0) @binding(${binding_copy_tex_in}) var textureIn: texture_external;
             @group(0) @binding(${binding_copy_tex_out}) var textureOut: texture_storage_2d<rgba8unorm, write>;
@@ -199,14 +199,75 @@ async function main() {
         `,
     });
 
-
-    modules["gaussian"] = device.createShaderModule({
-        label: "Gaussian Blur shader",
+    modules["Gaussian filter (7X7)"] = device.createShaderModule({
+        label: "Gaussian filter fast Blur shader",
         code: `
-            @group(0) @binding(${binding_copy_tex_in}) var textureIn: texture_external; // 입력 텍스처
-            @group(0) @binding(${binding_copy_tex_out}) var textureOut: texture_storage_2d<rgba8unorm, write>; // 출력 텍스처
+            @group(0) @binding(${binding_copy_tex_in}) var textureIn: texture_external; 
+            @group(0) @binding(${binding_copy_tex_out}) var textureOut: texture_storage_2d<rgba8unorm, write>; 
 
-            // 가우시안 필터 7x7 커널 정의
+            const Gaussian_filter_7x7: array<array<f32, 7>, 7> = array<array<f32, 7>, 7>(
+                array<f32, 7>(0.00000067, 0.00002292, 0.00019117, 0.00038771, 0.00019117, 0.00002292, 0.00000067),
+                array<f32, 7>(0.00002292, 0.00078633, 0.00655965, 0.01330373, 0.00655965, 0.00078633, 0.00002292),
+                array<f32, 7>(0.00019117, 0.00665965, 0.05472157, 0.11098164, 0.05472157, 0.00655965, 0.00019117),
+                array<f32, 7>(0.00038771, 0.01330373, 0.11098164, 0.22508352, 0.11098164, 0.01330373, 0.00038771),
+                array<f32, 7>(0.00019117, 0.00665965, 0.05472157, 0.11098164, 0.05472157, 0.00655965, 0.00019117),
+                array<f32, 7>(0.00002292, 0.00078633, 0.00655965, 0.01330373, 0.00655965, 0.00078633, 0.00002292),
+                array<f32, 7>(0.00000067, 0.00002292, 0.00019117, 0.00038771, 0.00019117, 0.00002292, 0.00000067)
+            );
+
+            @compute @workgroup_size(1,1)
+            fn main_comp(@builtin(global_invocation_id) id: vec3u) {
+                let uv = id.xy;
+
+                var color: vec4<f32> = vec4<f32>(0.0, 0.0, 0.0,1.0);
+
+                for (var i: i32 = -3; i <= 3; i = i + 1) {
+                    for (var j: i32 = -3; j <= 3; j = j + 1) {
+                        let kernelX = i + 3; 
+                        let kernelY = j + 3;
+
+                        let texSize = (textureDimensions(textureIn));
+
+                        var neighborX: i32 = i32(uv.x) + i;
+                        var neighborY: i32 = i32(uv.y) + j;
+
+                        if (i32(neighborX) < 0) {
+                            neighborX = 0;
+                        } else if (neighborX >= i32(texSize.x)) {
+                            neighborX = i32(texSize.x) - 1;
+                        }
+
+                        if (i32(neighborY) < 0) {
+                            neighborY = 0;
+                        } else if (neighborY >= i32(texSize.y)) {
+                            neighborY = i32(texSize.y) - 1;
+                        }
+
+                        let neighborUv = vec2<u32>(u32(neighborX), u32(neighborY));
+
+                        let texel = textureLoad(textureIn, neighborUv);
+
+                        let weight = Gaussian_filter_7x7[kernelX][kernelY];
+
+                        color[0] += weight * texel.r;
+                        color[1] += weight * texel.g;
+                        color[2] += weight * texel.b;
+                    }
+                }
+                
+                textureStore(textureOut, uv, color);
+            }
+
+        `,
+    });
+
+
+    modules["Gaussian filter (7X7,slow)"] = device.createShaderModule({
+        label: "Gaussian filter slow Blur shader",
+        code: `
+            @group(0) @binding(${binding_copy_tex_in}) var textureIn: texture_external; 
+            @group(0) @binding(${binding_copy_tex_out}) var textureOut: texture_storage_2d<rgba8unorm, write>; 
+
             const Gaussian_filter_7x7: array<array<f32, 7>, 7> = array<array<f32, 7>, 7>(
                 array<f32, 7>(0.00000067, 0.00002292, 0.00019117, 0.00038771, 0.00019117, 0.00002292, 0.00000067),
                 array<f32, 7>(0.00002292, 0.00078633, 0.00655965, 0.01330373, 0.00655965, 0.00078633, 0.00002292),
@@ -219,59 +280,48 @@ async function main() {
 
             @compute @workgroup_size(${workgroup_size[0]},${workgroup_size[1]})
             fn main_comp(@builtin(global_invocation_id) id: vec3u) {
-                // 현재 텍스처 픽셀 위치
+
                 let uv = id.xy;
 
-                // 색상 누적 변수
                 var color: vec4<f32> = vec4<f32>(0.0, 0.0, 0.0,1.0);
 
-                // 7x7 가우시안 필터 적용
                 for (var i: i32 = -3; i <= 3; i = i + 1) {
                     for (var j: i32 = -3; j <= 3; j = j + 1) {
-                        // 필터 커널 인덱스
-                        let kernelX = i + 3; // -3 ~ 3을 0 ~ 6으로 변환
+
+                        let kernelX = i + 3; 
                         let kernelY = j + 3;
 
                         let texSize = (textureDimensions(textureIn));
                     
-                        // 주변 픽셀 좌표 계산 (정수 기준)
                         var neighborX: i32 = i32(uv.x) + i;
                         var neighborY: i32 = i32(uv.y) + j;
 
-                        // X 좌표 제한
                         if (i32(neighborX) < 0) {
                             neighborX = 0;
                         } else if (neighborX >= i32(texSize.x)) {
                             neighborX = i32(texSize.x) - 1;
                         }
 
-                        // Y 좌표 제한
                         if (i32(neighborY) < 0) {
                             neighborY = 0;
                         } else if (neighborY >= i32(texSize.y)) {
                             neighborY = i32(texSize.y) - 1;
                         }
 
-                        // neighborUv 결과 (정수 좌표)
                         let neighborUv = vec2<u32>(u32(neighborX), u32(neighborY));
 
-                        // 주변 픽셀의 색상을 불러오기
                         let texel = textureLoad(textureIn, neighborUv);
 
-                        // 커널 값 가져오기
                         let weight = Gaussian_filter_7x7[kernelX][kernelY];
 
-                        // 가우시안 값 누적
                         color[0] += weight * texel.r;
                         color[1] += weight * texel.g;
                         color[2] += weight * texel.b;
                     }
                 }
                 
-                // 출력 텍스처에 저장
                 textureStore(textureOut, uv, color);
             }
-
         `,
     });
 
